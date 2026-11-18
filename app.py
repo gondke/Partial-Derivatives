@@ -321,6 +321,7 @@ else:
 # --- SIDEBAR SECTION 2: CRITICAL POINTS & ACTIVE POINT (x0, y0) ---
 st.sidebar.header("2. Critical Points & Point (x₀, y₀)")
 
+selected_cp_idx = 0
 if critical_points:
     if is_constrained:
         cp_options = [
@@ -467,11 +468,11 @@ if is_constrained:
                     + f" \\implies |\\bar{{H}}_3| = {chosen_cp['det_H3']:.4f}"
                 )
                 if chosen_cp["type"] == "Constrained Maximum":
-                    st.success(f"$\vert{}\\bar{{H}}_3\vert{} > 0 \\implies$ **{chosen_cp['type']}** ($z = {chosen_cp['z']:.4f}$)")
+                    st.success(f"$|\\bar{{H}}_3| > 0 \\implies$ **{chosen_cp['type']}** ($z = {chosen_cp['z']:.4f}$)")
                 elif chosen_cp["type"] == "Constrained Minimum":
-                    st.success(f"$\vert{}\\bar{{H}}_3\vert{} < 0 \\implies$ **{chosen_cp['type']}** ($z = {chosen_cp['z']:.4f}$)")
+                    st.success(f"$|\\bar{{H}}_3| < 0 \\implies$ **{chosen_cp['type']}** ($z = {chosen_cp['z']:.4f}$)")
                 else:
-                    st.warning(f"$\vert{}\\bar{{H}}_3\vert{} \\approx 0 \\implies$ **{chosen_cp['type']}**")
+                    st.warning(f"$|\\bar{{H}}_3| \\approx 0 \\implies$ **{chosen_cp['type']}**")
             else:
                 st.info("No constrained critical points found inside the current grid range.")
 else:
@@ -744,4 +745,38 @@ fig.add_trace(go.Scatter3d(
 
 t_end_x = x0 + ux * vec_scale
 t_end_y = y0 + uy * vec_scale
-t
+t_end_z = z0 + dir_deriv * vec_scale
+
+fig.add_trace(go.Scatter3d(
+    x=[x0, t_end_x], y=[y0, t_end_y], z=[z0, t_end_z],
+    mode='lines',
+    line=dict(color='crimson', width=8),
+    name='Directional Tangent ⟨uₓ, uᵧ, Dᵤf⟩'
+))
+fig.add_trace(go.Cone(
+    x=[t_end_x], y=[t_end_y], z=[t_end_z],
+    u=[ux * vec_scale * 0.25], v=[uy * vec_scale * 0.25], w=[dir_deriv * vec_scale * 0.25],
+    colorscale=[[0, 'crimson'], [1, 'crimson']],
+    showscale=False,
+    sizemode='absolute',
+    sizeref=grid_range * 0.08,
+    anchor='tip',
+    name='Directional Arrow'
+))
+
+# Layout & Camera Configuration (uirevision locks camera orientation across updates)
+fig.update_layout(
+    height=740,
+    margin=dict(l=0, r=0, b=0, t=30),
+    uirevision='constant',
+    scene=dict(
+        xaxis_title='X',
+        yaxis_title='Y',
+        zaxis_title='Z',
+        aspectmode='cube',
+        uirevision='constant'
+    ),
+    legend=dict(x=0.01, y=0.99, bgcolor='rgba(255, 255, 255, 0.78)')
+)
+
+st.plotly_chart(fig, use_container_width=True)
