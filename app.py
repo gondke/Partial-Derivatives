@@ -10,8 +10,13 @@ st.set_page_config(page_title="3D Partial & Directional Derivatives", layout="wi
 st.title("Interactive 3D Partial & Directional Derivatives Explorer")
 st.markdown(
     "Visualize $z = f(x, y)$, explore partial derivatives along the $x$ and $y$ axes, "
-    "and rotate a unit vector $\\mathbf{u}$ to observe the directional derivative $D_{\\mathbf{u}}f(x_0, y_0)$."
+    "and rotate a unit vector $\\mathbf{u}$ to observe the directional derivative $D_{\\mathbf{u}}f(x_0, y_0)$ "
+    "and gradient vector $\\nabla f(x_0, y_0)$."
 )
+
+# Initialize session state for angle_deg so buttons can update the slider cleanly
+if "angle_deg" not in st.session_state:
+    st.session_state.angle_deg = 45
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("1. Function & Grid Settings")
@@ -34,20 +39,6 @@ with col_pt1:
 with col_pt2:
     y0 = st.number_input("y₀", min_value=-grid_range, max_value=grid_range, value=0.5, step=0.1)
 
-st.sidebar.header("3. Unit Vector Rotation (u)")
-angle_deg = st.sidebar.slider(
-    "Direction Angle θ (degrees from +x axis)",
-    min_value=0,
-    max_value=360,
-    value=45,
-    step=1
-)
-
-st.sidebar.header("4. Visual Overlays")
-show_tangent_plane = st.sidebar.checkbox("Show Tangent Plane at (x₀, y₀, z₀)", value=True)
-show_partial_dirs = st.sidebar.checkbox("Highlight Partial Derivative Vectors on Plane", value=True)
-show_slices = st.sidebar.checkbox("Show Surface Cross-Section Traces", value=True)
-
 # --- SYMBOLIC COMPUTATION (SYMPY WITH LATEX PARSING) ---
 x, y = sp.symbols('x y')
 
@@ -58,7 +49,6 @@ def parse_function_input(raw_input: str):
         cleaned = cleaned.split("=", 1)[1].strip()
     try:
         expr_parsed = parse_latex(cleaned)
-        # Ensure symbol names match our canonical x, y symbols
         subs_map = {}
         for sym in expr_parsed.free_symbols:
             if sym.name == 'x':
@@ -95,6 +85,36 @@ except Exception as e:
     st.error(f"Could not parse or evaluate expression at ({x0}, {y0}): {e}")
     st.stop()
 
+# Compute gradient magnitude and steepest ascent angle before rendering the slider
+grad_mag = float(np.hypot(fx_val, fy_val))
+steepest_angle_deg = int(np.round(np.rad2deg(np.arctan2(fy_val, fx_val))) % 360)
+
+def snap_to_steepest_ascent():
+    st.session_state.angle_deg = steepest_angle_deg
+
+# --- SIDEBAR SECTION 3 & 4 (AFTER GRADIENT CALCULATION FOR SNAP BUTTON) ---
+st.sidebar.header("3. Unit Vector Rotation (u)")
+st.sidebar.button(
+    f"Snap θ to Steepest Ascent ({steepest_angle_deg}°)",
+    on_click=snap_to_steepest_ascent,
+    disabled=(grad_mag < 1e-9),
+    help="Aligns the unit vector u with the gradient vector ∇f(x₀, y₀) to maximize Dᵤf."
+)
+
+angle_deg = st.sidebar.slider(
+    "Direction Angle θ (degrees from +x axis)",
+    min_value=0,
+    max_value=360,
+    key="angle_deg",
+    step=1
+)
+
+st.sidebar.header("4. Visual Overlays")
+show_tangent_plane = st.sidebar.checkbox("Show Tangent Plane at (x₀, y₀, z₀)", value=True)
+show_partial_dirs = st.sidebar.checkbox("Highlight Partial Derivative Vectors on Plane", value=True)
+show_gradient_xy = st.sidebar.checkbox("Show Gradient Vector ∇f on xy-Plane", value=True)
+show_slices = st.sidebar.checkbox("Show Surface Cross-Section Traces", value=True)
+
 # --- DIRECTIONAL DERIVATIVE CALCULATION ---
 theta_rad = np.deg2rad(angle_deg)
 ux = np.cos(theta_rad)
@@ -105,7 +125,7 @@ dir_deriv = fx_val * ux + fy_val * uy
 
 # --- METRICS & SYMBOLIC DISPLAY ---
 st.markdown("### Symbolic & Numerical Analysis")
-m1, m2, m3, m4 = st.columns(4)
+m1, m2, m3, m4, m5 = st.columns(5)
 
 with m1:
     st.metric(label="Point on Surface (x₀, y₀, z₀)", value=f"({x0:.2f}, {y0:.2f}, {z0:.3f})")
@@ -116,7 +136,10 @@ with m3:
     st.metric(label="∂z/∂y at (x₀, y₀)", value=f"{fy_val:.4f}")
     st.latex(f"\\frac{{\\partial z}}{{\\partial y}} = {sp.latex(fy_expr)}")
 with m4:
-    st.metric(label=f"Directional Derivative Dᵤf (θ={angle_deg}°)", value=f"{dir_deriv:.4f}")
+    st.metric(label="Gradient Magnitude ‖∇f‖", value=f"{grad_mag:.4f}")
+    st.latex(f"\\nabla f = \\langle {fx_val:.2f}, {fy_val:.2f} \\rangle")
+with m5:
+    st.metric(label=f"Directional Deriv. Dᵤf (θ={angle_deg}°)", value=f"{dir_deriv:.4f}")
     st.latex(f"\\mathbf{{u}} = \\langle {ux:.2f}, {uy:.2f} \\rangle")
 
 # --- 3D VISUALIZATION (PLOTLY) ---
@@ -190,7 +213,6 @@ if show_tangent_plane:
 
 # 5. Highlighted First-Order Partial Derivative Tangent Vectors on the Tangent Plane
 if show_partial_dirs:
-    # Tangent vector in +x direction: <1, 0, fx_val>
     tx_end_x = x0 + vec_scale
     tx_end_y = y0
     tx_end_z = z0 + fx_val * vec_scale
@@ -212,7 +234,6 @@ if show_partial_dirs:
         name='∂z/∂x Arrow'
     ))
 
-    # Tangent vector in +y direction: <0, 1, fy_val>
     ty_end_x = x0
     ty_end_y = y0 + vec_scale
     ty_end_z = z0 + fy_val * vec_scale
@@ -234,7 +255,43 @@ if show_partial_dirs:
         name='∂z/∂y Arrow'
     ))
 
-# 6. Rotating Unit Vector u (horizontal) and Directional Tangent Vector on the Tangent Plane
+# 6. 3D Gradient Vector Arrow on the xy-plane (z = 0)
+if show_gradient_xy:
+    # Vertical projection line from (x0, y0, 0) up to (x0, y0, z0)
+    fig.add_trace(go.Scatter3d(
+        x=[x0, x0], y=[y0, y0], z=[0, z0],
+        mode='lines+markers',
+        line=dict(color='#00A86B', width=3, dash='dot'),
+        marker=dict(size=[5, 0], color='#00A86B'),
+        name='Projection to xy-plane (x₀, y₀, 0)'
+    ))
+
+    if grad_mag > 1e-9:
+        # Scale gradient visually so large slopes stay readable within the grid
+        grad_visual_scale = vec_scale if grad_mag <= 2.5 else (vec_scale * 2.5 / grad_mag)
+        gx_end = x0 + fx_val * grad_visual_scale
+        gy_end = y0 + fy_val * grad_visual_scale
+
+        fig.add_trace(go.Scatter3d(
+            x=[x0, gx_end], y=[y0, gy_end], z=[0, 0],
+            mode='lines',
+            line=dict(color='#00A86B', width=8),
+            name='Gradient Vector ∇f = ⟨fₓ, fᵧ, 0⟩ (xy-plane)'
+        ))
+        fig.add_trace(go.Cone(
+            x=[gx_end], y=[gy_end], z=[0],
+            u=[fx_val * grad_visual_scale * 0.25],
+            v=[fy_val * grad_visual_scale * 0.25],
+            w=[0],
+            colorscale=[[0, '#00A86B'], [1, '#00A86B']],
+            showscale=False,
+            sizemode='absolute',
+            sizeref=grid_range * 0.08,
+            anchor='tip',
+            name='Gradient Arrow'
+        ))
+
+# 7. Rotating Unit Vector u (horizontal at z = z0) and Directional Tangent Vector
 u_end_x = x0 + ux * vec_scale
 u_end_y = y0 + uy * vec_scale
 u_end_z = z0
@@ -247,7 +304,6 @@ fig.add_trace(go.Scatter3d(
     name='Unit Vector u (horizontal)'
 ))
 
-# Directional Tangent Vector on the tangent plane: <ux, uy, D_u f>
 t_end_x = x0 + ux * vec_scale
 t_end_y = y0 + uy * vec_scale
 t_end_z = z0 + dir_deriv * vec_scale
@@ -270,7 +326,6 @@ fig.add_trace(go.Cone(
 ))
 
 # Layout & Camera Configuration
-# uirevision='constant' locks camera orientation & zoom across slider/coordinate updates
 fig.update_layout(
     height=720,
     margin=dict(l=0, r=0, b=0, t=30),
