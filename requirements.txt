@@ -1,5 +1,6 @@
 streamlit>=1.35.0
 numpy>=1.26.0
+scipy>=1.11.0
 sympy>=1.12
 plotly>=5.20.0
 antlr4-python3-runtime==4.11.1
