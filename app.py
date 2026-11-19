@@ -886,4 +886,470 @@ def page_geometric_system_solver():
         st.sidebar.latex(f"\\text{{Eq 2: }} {sp.latex(f2)} = 0")
 
         f1_num = sp.lambdify((x, y), f1, modules=["numpy"])
-        f2_num = sp
+        f2_num = sp.lambdify((x, y), f2, modules=["numpy"])
+
+        # Check if system is linear in (x, y)
+        is_linear_2d = f1.is_polynomial(x, y) and f2.is_polynomial(x, y) and (
+            sp.Poly(f1, x, y).total_degree() <= 1 and sp.Poly(f2, x, y).total_degree() <= 1
+        )
+
+        # Solve symbolically + numerically
+        solutions_2d = []
+        symbolic_status = ""
+
+        try:
+            sym_sols = sp.solve([f1, f2], (x, y), dict=True)
+            for s in sym_sols:
+                if x in s and y in s:
+                    if not s[x].free_symbols and not s[y].free_symbols:
+                        xv = complex(s[x].evalf())
+                        yv = complex(s[y].evalf())
+                        if abs(xv.imag) < 1e-7 and abs(yv.imag) < 1e-7:
+                            solutions_2d.append((float(xv.real), float(yv.real)))
+                    else:
+                        symbolic_status = f"Infinitely many solutions (parametric: $x = {sp.latex(s[x])},\\; y = {sp.latex(s[y])}$)"
+        except Exception:
+            pass
+
+        # Multi-start numerical root finder to catch any nonlinear intersections missed symbolically
+        def res_2d_fn(pt):
+            try:
+                v1 = float(f1_num(pt[0], pt[1]))
+                v2 = float(f2_num(pt[0], pt[1]))
+                if not (np.isfinite(v1) and np.isfinite(v2)):
+                    return np.array([1e6, 1e6])
+                return np.array([v1, v2], dtype=float)
+            except Exception:
+                return np.array([1e6, 1e6])
+
+        seeds = np.linspace(-bound, bound, 10)
+        for sx in seeds:
+            for sy in seeds:
+                r = root(res_2d_fn, x0=np.array([sx, sy]), method="hybr", tol=1e-10)
+                if r.success and np.linalg.norm(res_2d_fn(r.x)) < 1e-6:
+                    solutions_2d.append((float(r.x[0]), float(r.x[1])))
+
+        unique_sols_2d = []
+        for sx, sy in solutions_2d:
+            sx = 0.0 if abs(sx) < 1e-7 else sx
+            sy = 0.0 if abs(sy) < 1e-7 else sy
+            if not any(np.hypot(sx - ux, sy - uy) < 1e-3 for ux, uy in unique_sols_2d):
+                unique_sols_2d.append((sx, sy))
+        unique_sols_2d.sort(key=lambda p: (round(p[0], 4), round(p[1], 4)))
+
+        # Geometric Classification Banner
+        st.markdown("### Geometric Diagnosis & Solutions")
+        if is_linear_2d:
+            A_mat, b_vec = sp.linear_eq_to_matrix([f1, f2], [x, y])
+            rank_A = A_mat.rank()
+            rank_Aug = A_mat.row_join(b_vec).rank()
+            if rank_A == 2 and rank_Aug == 2 and unique_sols_2d:
+                pt = unique_sols_2d[0]
+                st.success(f"**Consistent & Independent (Rank = 2):** Two non-parallel lines intersecting at a single unique point **({pt[0]:.4f}, {pt[1]:.4f})**.")
+            elif rank_A < rank_Aug:
+                st.error("**Inconsistent System (Parallel Lines):** The lines have identical slopes but distinct intercepts — they never intersect (No Solution).")
+            else:
+                st.warning(f"**Consistent & Dependent (Coincident Lines):** Both equations represent the exact same line — infinitely many solutions. {symbolic_status}")
+        else:
+            if symbolic_status:
+                st.warning(f"**Overlapping Curves:** {symbolic_status}")
+            elif unique_sols_2d:
+                st.success(f"**Found {len(unique_sols_2d)} Real Intersection Point(s):**")
+            else:
+                st.info("**No Real Intersections Found:** The two curves do not intersect in the real plane (or intersect outside numerical reach).")
+
+        if unique_sols_2d:
+            sol_cols = st.columns(min(len(unique_sols_2d), 4))
+            for idx, (px, py) in enumerate(unique_sols_2d):
+                with sol_cols[idx % 4]:
+                    st.metric(label=f"Intersection #{idx+1}", value=f"({px:.4f}, {py:.4f})")
+
+        # 2D Contour Plot of f1(x, y) = 0 and f2(x, y) = 0
+        lin = np.linspace(-bound, bound, res_2d)
+        X, Y = np.meshgrid(lin, lin)
+        Z1 = f1_num(X, Y)
+        Z2 = f2_num(X, Y)
+        if np.isscalar(Z1):
+            Z1 = np.full_like(X, Z1)
+        if np.isscalar(Z2):
+            Z2 = np.full_like(X, Z2)
+
+        fig2d = go.Figure()
+
+        fig2d.add_trace(go.Contour(
+            x=lin, y=lin, z=Z1,
+            contours=dict(start=0, end=0, size=1, coloring="none"),
+            line=dict(color="#1E88E5", width=4),
+            showscale=False,
+            name=f"Eq 1: {eq1_str}"
+        ))
+        # Dummy legend entry because Plotly Contour coloring='none' hides legend items in some versions
+        fig2d.add_trace(go.Scatter(
+            x=[None], y=[None], mode="lines",
+            line=dict(color="#1E88E5", width=4),
+            name=f"Eq 1: {eq1_str}"
+        ))
+
+        fig2d.add_trace(go.Contour(
+            x=lin, y=lin, z=Z2,
+            contours=dict(start=0, end=0, size=1, coloring="none"),
+            line=dict(color="#E53935", width=4, dash="dash" if "Coincident" in preset_2d else "solid"),
+            showscale=False,
+            name=f"Eq 2: {eq2_str}"
+        ))
+        fig2d.add_trace(go.Scatter(
+            x=[None], y=[None], mode="lines",
+            line=dict(color="#E53935", width=4),
+            name=f"Eq 2: {eq2_str}"
+        ))
+
+        if unique_sols_2d:
+            fig2d.add_trace(go.Scatter(
+                x=[p[0] for p in unique_sols_2d],
+                y=[p[1] for p in unique_sols_2d],
+                mode="markers+text",
+                text=[f"({p[0]:.2f}, {p[1]:.2f})" for p in unique_sols_2d],
+                textposition="top right",
+                textfont=dict(size=12, color="black"),
+                marker=dict(size=12, color="#FFD700", symbol="diamond", line=dict(width=2, color="black")),
+                name="Intersection Solution(s)"
+            ))
+
+        fig2d.update_layout(
+            height=680,
+            xaxis=dict(title="x", range=[-bound, bound], zeroline=True, zerolinewidth=1.5, zerolinecolor="gray", scaleanchor="y", scaleratio=1),
+            yaxis=dict(title="y", range=[-bound, bound], zeroline=True, zerolinewidth=1.5, zerolinecolor="gray"),
+            legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)"),
+            margin=dict(l=20, r=20, t=30, b=20)
+        )
+        st.plotly_chart(fig2d, use_container_width=True)
+
+    # --------------------------------------------------------------------------
+    # 3 VARIABLES (3D SPACE)
+    # --------------------------------------------------------------------------
+    else:
+        preset_3d = st.sidebar.selectbox(
+            "Load Example System (3D):",
+            options=[
+                "Custom",
+                "Planes: Unique Point Intersection",
+                "Planes: Line of Intersection (Rank 2)",
+                "Planes: Parallel Planes (No Solution)",
+                "Planes: Triangular Prism (Pairwise Lines, No Common Point)",
+                "Nonlinear: Sphere, Cylinder & Plane"
+            ],
+            index=1,
+            key="preset_3d"
+        )
+        defaults_3d = {
+            "Custom": (r"x + y + z = 3", r"2x - y + z = 2", r"x + 2y - z = 2"),
+            "Planes: Unique Point Intersection": (r"x + y + z = 3", r"2x - y + z = 2", r"x + 2y - z = 2"),
+            "Planes: Line of Intersection (Rank 2)": (r"x + y + z = 2", r"x - y + z = 0", r"2x + 2z = 2"),
+            "Planes: Parallel Planes (No Solution)": (r"x + y + z = 1", r"x + y + z = -2", r"2x - y + z = 1"),
+            "Planes: Triangular Prism (Pairwise Lines, No Common Point)": (r"x + y = 2", r"y + z = 2", r"x - z = 2"),
+            "Nonlinear: Sphere, Cylinder & Plane": (r"x^2 + y^2 + z^2 = 9", r"x^2 + y^2 = 4", r"z = x + 1"),
+        }
+        d1, d2, d3 = defaults_3d[preset_3d]
+        eq1_str = st.sidebar.text_input("Equation 1:", value=d1, key=f"eq3d_1_{preset_3d}")
+        eq2_str = st.sidebar.text_input("Equation 2:", value=d2, key=f"eq3d_2_{preset_3d}")
+        eq3_str = st.sidebar.text_input("Equation 3:", value=d3, key=f"eq3d_3_{preset_3d}")
+
+        col_r1, col_r2 = st.sidebar.columns(2)
+        with col_r1:
+            bound3 = st.number_input("Box Range (±)", min_value=2.0, max_value=30.0, value=4.0, step=1.0, key="bound_3d")
+        with col_r2:
+            res3 = st.slider("3D Grid Resolution", min_value=20, max_value=50, value=32, step=4, key="res_3d")
+
+        show_pairwise = st.sidebar.checkbox("Highlight Pairwise Intersection Curves (S₁∩S₂, S₂∩S₃, S₁∩S₃)", value=True)
+        surf_opacity = st.sidebar.slider("Surface Opacity", min_value=0.15, max_value=0.85, value=0.45, step=0.05)
+
+        try:
+            f1 = parse_eq_to_expr(eq1_str, (x, y, z))
+            f2 = parse_eq_to_expr(eq2_str, (x, y, z))
+            f3 = parse_eq_to_expr(eq3_str, (x, y, z))
+        except Exception as e:
+            st.error(f"Equation parsing error: {e}")
+            st.stop()
+
+        st.sidebar.latex(f"\\text{{Eq 1: }} {sp.latex(f1)} = 0")
+        st.sidebar.latex(f"\\text{{Eq 2: }} {sp.latex(f2)} = 0")
+        st.sidebar.latex(f"\\text{{Eq 3: }} {sp.latex(f3)} = 0")
+
+        f1_num = sp.lambdify((x, y, z), f1, modules=["numpy"])
+        f2_num = sp.lambdify((x, y, z), f2, modules=["numpy"])
+        f3_num = sp.lambdify((x, y, z), f3, modules=["numpy"])
+
+        is_linear_3d = (
+            f1.is_polynomial(x, y, z)
+            and f2.is_polynomial(x, y, z)
+            and f3.is_polynomial(x, y, z)
+            and sp.Poly(f1, x, y, z).total_degree() <= 1
+            and sp.Poly(f2, x, y, z).total_degree() <= 1
+            and sp.Poly(f3, x, y, z).total_degree() <= 1
+        )
+
+        # Solve 3D system symbolically + numerically
+        solutions_3d = []
+        param_desc = ""
+        try:
+            sym_sols3 = sp.solve([f1, f2, f3], (x, y, z), dict=True)
+            for s in sym_sols3:
+                if x in s and y in s and z in s:
+                    if not (s[x].free_symbols or s[y].free_symbols or s[z].free_symbols):
+                        xv = complex(s[x].evalf())
+                        yv = complex(s[y].evalf())
+                        zv = complex(s[z].evalf())
+                        if abs(xv.imag) < 1e-7 and abs(yv.imag) < 1e-7 and abs(zv.imag) < 1e-7:
+                            solutions_3d.append((float(xv.real), float(yv.real), float(zv.real)))
+                    else:
+                        param_desc = f"$x = {sp.latex(s[x])},\\quad y = {sp.latex(s[y])},\\quad z = {sp.latex(s[z])}$"
+        except Exception:
+            pass
+
+        def res_3d_fn(pt):
+            try:
+                v1 = float(f1_num(pt[0], pt[1], pt[2]))
+                v2 = float(f2_num(pt[0], pt[1], pt[2]))
+                v3 = float(f3_num(pt[0], pt[1], pt[2]))
+                if not all(np.isfinite([v1, v2, v3])):
+                    return np.array([1e6, 1e6, 1e6])
+                return np.array([v1, v2, v3], dtype=float)
+            except Exception:
+                return np.array([1e6, 1e6, 1e6])
+
+        seeds3 = np.linspace(-bound3, bound3, 5)
+        for sx in seeds3:
+            for sy in seeds3:
+                for sz in seeds3:
+                    r = root(res_3d_fn, x0=np.array([sx, sy, sz]), method="hybr", tol=1e-10)
+                    if r.success and np.linalg.norm(res_3d_fn(r.x)) < 1e-6:
+                        solutions_3d.append((float(r.x[0]), float(r.x[1]), float(r.x[2])))
+
+        unique_sols_3d = []
+        for sx, sy, sz in solutions_3d:
+            sx = 0.0 if abs(sx) < 1e-7 else sx
+            sy = 0.0 if abs(sy) < 1e-7 else sy
+            sz = 0.0 if abs(sz) < 1e-7 else sz
+            if not any(np.linalg.norm([sx - ux, sy - uy, sz - uz]) < 1e-3 for ux, uy, uz in unique_sols_3d):
+                unique_sols_3d.append((sx, sy, sz))
+        unique_sols_3d.sort(key=lambda p: (round(p[0], 4), round(p[1], 4), round(p[2], 4)))
+
+        # Geometric Diagnosis
+        st.markdown("### Geometric Diagnosis & Solutions")
+        if is_linear_3d:
+            A3, b3 = sp.linear_eq_to_matrix([f1, f2, f3], [x, y, z])
+            rank_A3 = A3.rank()
+            rank_Aug3 = A3.row_join(b3).rank()
+            if rank_A3 == 3 and rank_Aug3 == 3 and unique_sols_3d:
+                pt = unique_sols_3d[0]
+                st.success(f"**Unique Point Intersection (Rank = 3):** All three planes meet at a single point **({pt[0]:.4f}, {pt[1]:.4f}, {pt[2]:.4f})**.")
+            elif rank_A3 == 2 and rank_Aug3 == 2:
+                st.warning(f"**Line of Intersection (Rank = 2):** All three planes share a common line of infinitely many solutions: {param_desc}")
+            elif rank_A3 == 1 and rank_Aug3 == 1:
+                st.warning(f"**Coincident Planes (Rank = 1):** All three equations describe the same plane: {param_desc}")
+            else:
+                st.error(f"**Inconsistent System (Rank(A)={rank_A3} < Rank([A|b])={rank_Aug3}):** At least two planes are parallel, or the three planes form a triangular prism with no common intersection point.")
+        else:
+            if unique_sols_3d:
+                st.success(f"**Found {len(unique_sols_3d)} Real 3-Surface Intersection Point(s):**")
+            elif param_desc:
+                st.warning(f"**Curve/Surface of Intersection:** {param_desc}")
+            else:
+                st.info("**No Common 3-Surface Intersection Point Found** in real space.")
+
+        if unique_sols_3d:
+            cols3 = st.columns(min(len(unique_sols_3d), 4))
+            for idx, (px, py, pz) in enumerate(unique_sols_3d):
+                with cols3[idx % 4]:
+                    st.metric(label=f"Solution #{idx+1}", value=f"({px:.3f}, {py:.3f}, {pz:.3f})")
+
+        # Build 3D Plotly Scene
+        fig3d = go.Figure()
+        lin3 = np.linspace(-bound3, bound3, res3)
+        X3, Y3, Z3 = np.meshgrid(lin3, lin3, lin3, indexing="ij")
+
+        surface_specs = [
+            (f1, f1_num, f"Eq 1: {eq1_str}", "#1E88E5"),
+            (f2, f2_num, f"Eq 2: {eq2_str}", "#E53935"),
+            (f3, f3_num, f"Eq 3: {eq3_str}", "#43A047"),
+        ]
+
+        # Helper to render an implicit surface F(x, y, z) = 0 cleanly
+        def add_implicit_surface_trace(expr_sym, fn_num, label, color_hex):
+            # Fast exact planar/explicit mesh if linear in z, y, or x
+            for dep_var, order in [(z, ("x", "y")), (y, ("x", "z")), (x, ("y", "z"))]:
+                if sp.degree(expr_sym, dep_var) == 1:
+                    sol_dep = sp.solve(expr_sym, dep_var)
+                    if sol_dep:
+                        dep_expr = sol_dep[0]
+                        if dep_var == z:
+                            g_fn = sp.lambdify((x, y), dep_expr, modules=["numpy"])
+                            Xg, Yg = np.meshgrid(lin3, lin3)
+                            Zg = g_fn(Xg, Yg)
+                            if np.isscalar(Zg):
+                                Zg = np.full_like(Xg, Zg)
+                            Zg = np.where((Zg >= -bound3) & (Zg <= bound3), Zg, np.nan)
+                            fig3d.add_trace(go.Surface(
+                                x=Xg, y=Yg, z=Zg,
+                                colorscale=[[0, color_hex], [1, color_hex]],
+                                opacity=surf_opacity,
+                                showscale=False,
+                                showlegend=True,
+                                name=label
+                            ))
+                            return
+                        elif dep_var == y:
+                            g_fn = sp.lambdify((x, z), dep_expr, modules=["numpy"])
+                            Xg, Zg = np.meshgrid(lin3, lin3)
+                            Yg = g_fn(Xg, Zg)
+                            if np.isscalar(Yg):
+                                Yg = np.full_like(Xg, Yg)
+                            Yg = np.where((Yg >= -bound3) & (Yg <= bound3), Yg, np.nan)
+                            fig3d.add_trace(go.Surface(
+                                x=Xg, y=Yg, z=Zg,
+                                colorscale=[[0, color_hex], [1, color_hex]],
+                                opacity=surf_opacity,
+                                showscale=False,
+                                showlegend=True,
+                                name=label
+                            ))
+                            return
+                        elif dep_var == x:
+                            g_fn = sp.lambdify((y, z), dep_expr, modules=["numpy"])
+                            Yg, Zg = np.meshgrid(lin3, lin3)
+                            Xg = g_fn(Yg, Zg)
+                            if np.isscalar(Xg):
+                                Xg = np.full_like(Yg, Xg)
+                            Xg = np.where((Xg >= -bound3) & (Xg <= bound3), Xg, np.nan)
+                            fig3d.add_trace(go.Surface(
+                                x=Xg, y=Yg, z=Zg,
+                                colorscale=[[0, color_hex], [1, color_hex]],
+                                opacity=surf_opacity,
+                                showscale=False,
+                                showlegend=True,
+                                name=label
+                            ))
+                            return
+
+            # General implicit 3D Isosurface for spheres, cylinders, hyperboloids, etc.
+            V = fn_num(X3, Y3, Z3)
+            if np.isscalar(V):
+                V = np.full_like(X3, V)
+            fig3d.add_trace(go.Isosurface(
+                x=X3.flatten(),
+                y=Y3.flatten(),
+                z=Z3.flatten(),
+                value=V.flatten(),
+                isomin=0.0,
+                isomax=0.0,
+                surface_count=1,
+                colorscale=[[0, color_hex], [1, color_hex]],
+                opacity=surf_opacity,
+                showscale=False,
+                showlegend=True,
+                caps=dict(x_show=False, y_show=False, z_show=False),
+                name=label
+            ))
+
+        for expr_i, fn_i, lbl_i, col_i in surface_specs:
+            add_implicit_surface_trace(expr_i, fn_i, lbl_i, col_i)
+
+        # Pairwise Intersection Curves (where two surfaces meet)
+        if show_pairwise:
+            pairs = [
+                (f1, f2, f1_num, f2_num, "Eq 1 ∩ Eq 2", "#00E5FF"),
+                (f2, f3, f2_num, f3_num, "Eq 2 ∩ Eq 3", "#FF9100"),
+                (f1, f3, f1_num, f3_num, "Eq 1 ∩ Eq 3", "#D500F9"),
+            ]
+            t_grid = np.linspace(-bound3, bound3, 90)
+            for fa, fb, fna, fnb, pair_lbl, p_col in pairs:
+                # Try solving pairwise symbolically in terms of one free coordinate (x, y, or z)
+                plotted_pair = False
+                for free_var, dep_vars in [(z, (x, y)), (x, (y, z)), (y, (x, z))]:
+                    try:
+                        psol = sp.solve([fa, fb], dep_vars, dict=True)
+                        if psol:
+                            for branch in psol:
+                                if all(dv in branch for dv in dep_vars):
+                                    d1_fn = sp.lambdify(free_var, branch[dep_vars[0]], modules=["numpy"])
+                                    d2_fn = sp.lambdify(free_var, branch[dep_vars[1]], modules=["numpy"])
+                                    with np.errstate(all="ignore"):
+                                        v1 = np.array(d1_fn(t_grid), dtype=complex)
+                                        v2 = np.array(d2_fn(t_grid), dtype=complex)
+                                    if v1.ndim == 0:
+                                        v1 = np.full_like(t_grid, v1, dtype=complex)
+                                    if v2.ndim == 0:
+                                        v2 = np.full_like(t_grid, v2, dtype=complex)
+
+                                    valid = (
+                                        (np.abs(v1.imag) < 1e-6)
+                                        & (np.abs(v2.imag) < 1e-6)
+                                        & np.isfinite(v1.real)
+                                        & np.isfinite(v2.real)
+                                        & (np.abs(v1.real) <= bound3)
+                                        & (np.abs(v2.real) <= bound3)
+                                    )
+                                    c1 = np.where(valid, v1.real, np.nan)
+                                    c2 = np.where(valid, v2.real, np.nan)
+                                    if np.any(valid):
+                                        coords = {free_var: t_grid, dep_vars[0]: c1, dep_vars[1]: c2}
+                                        fig3d.add_trace(go.Scatter3d(
+                                            x=coords[x], y=coords[y], z=coords[z],
+                                            mode="lines",
+                                            line=dict(color=p_col, width=6),
+                                            name=pair_lbl
+                                        ))
+                                        plotted_pair = True
+                            if plotted_pair:
+                                break
+                    except Exception:
+                        continue
+
+        # Plot 3-Surface Intersection Point(s)
+        if unique_sols_3d:
+            fig3d.add_trace(go.Scatter3d(
+                x=[p[0] for p in unique_sols_3d],
+                y=[p[1] for p in unique_sols_3d],
+                z=[p[2] for p in unique_sols_3d],
+                mode="markers+text",
+                text=[f"Solution<br>({p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f})" for p in unique_sols_3d],
+                textposition="top center",
+                textfont=dict(size=11, color="black"),
+                marker=dict(size=10, color="#FFD700", symbol="diamond", line=dict(width=2, color="black")),
+                name="3-Surface Intersection Solution"
+            ))
+
+        fig3d.update_layout(
+            height=740,
+            margin=dict(l=0, r=0, b=0, t=30),
+            uirevision="sys3d_constant",
+            scene=dict(
+                xaxis=dict(title="X", range=[-bound3, bound3]),
+                yaxis=dict(title="Y", range=[-bound3, bound3]),
+                zaxis=dict(title="Z", range=[-bound3, bound3]),
+                aspectmode="cube",
+                uirevision="sys3d_constant"
+            ),
+            legend=dict(x=0.01, y=0.99, bgcolor="rgba(255, 255, 255, 0.80)")
+        )
+        st.plotly_chart(fig3d, use_container_width=True)
+
+
+# ==============================================================================
+# TOP-LEVEL NAVIGATION ROUTER
+# ==============================================================================
+st.sidebar.title("Navigation")
+selected_page = st.sidebar.radio(
+    "Go to Page:",
+    options=[
+        "1. Partial, Directional & Lagrange",
+        "2. Geometric System Solver (2D & 3D)"
+    ],
+    index=0
+)
+st.sidebar.markdown("---")
+
+if selected_page == "1. Partial, Directional & Lagrange":
+    page_derivatives_and_lagrange()
+else:
+    page_geometric_system_solver()
